@@ -2,20 +2,23 @@
   (:use clojure.test))
 
 
+(declare eval-)
+
 (defn self-eval? 
   "test if variable evaluate to itself or not,
   with side effect printing exception message"
   [x]
   (try
-    (or (string? x)
-        (number? x)
-        (char? x)
-        (keyword? x)
-        (true? x)
-        (false? x)
-        (nil? x)
-        (empty? x)
-        (vector? x))
+    (or 
+      (string? x)
+      (number? x)
+      (char? x)
+      (keyword? x)
+      (true? x)
+      (false? x)
+      (nil? x)
+      (empty? x)
+      (vector? x))
     (catch Exception e 
       (println "self-eval?")
       (println (.getMessage e))
@@ -62,14 +65,28 @@
          vars vars
          values values]
     (cond
-      (or (empty? vars) (empty? values)) (assoc local-env
-                                                :parent
-                                                env)
+      (or (empty? vars) (empty? values)) 
+      (assoc local-env
+             :parent
+             env)
+      
       :else (recur (assoc local-env 
                           (first vars) 
                           (first values))
                    (next vars)
                    (next values)))))
+
+(defn eval-arg 
+  "evaluate anonymous function arguments"
+  [args env-]
+  (map (fn [x]
+         (eval- x :env env-))
+       args))
+
+(defn eval-cond [cond-pairs env-]
+  (if (eval- (first cond-pairs) :env env-)
+    (eval- (fnext cond-pairs) :env env-)
+    (eval-cond (nnext cond-pairs) env-)))
 
 
 (def global-env {})
@@ -79,50 +96,39 @@
   [exp & 
    {:keys [env]
     :or {env global-env}}]
-  (letfn [(eval-arg 
-            [args env-]
-            (map (fn [x]
-                   (eval- x :env env))
-                 args))]
          
-         (cond
-           (self-eval? exp) exp  ;var evaluate to self
-           (not-list? exp) (get-env-var env exp)  ;var in env
+  (cond
+    (self-eval? exp) exp  ;var evaluate to self
+    (not-list? exp) (get-env-var env exp)  ;var in env
+    
+    (not-list? (first exp))
+    (cond 
+      (= 'quote (first exp)) (fnext exp)  ;quote
+      (= '= (first exp)) (= (eval- (fnext exp) :env env)
+                            (eval- (fnnext exp) :env env))  ;equal
+      (= 'first (first exp)) (first (eval- (fnext exp) :env env))  ;first
+      (= 'next (first exp)) (next (eval- (fnext exp) :env env))  ;next
+      (= 'cons (first exp)) (cons (eval- (fnext exp) :env env) 
+                                  (eval- (fnnext exp) :env env))  ;cons
+      ;cond
+      (= 'cond (first exp)) (eval-cond (next exp) env)
+      
+      ;math
+      (math? (first exp))
+      (let [args (eval-arg (next exp) env)
+            op (get-math-op (first exp))]
+        (reduce op args))
            
-           (not-list? (first exp))
-           (cond 
-             (= 'quote (first exp)) (fnext exp)  ;quote
-             (= '= (first exp)) (= (eval- (fnext exp) :env env)
-                                   (eval- (fnnext exp) :env env))  ;equal
-             (= 'first (first exp)) (first (eval- (fnext exp) :env env))  ;first
-             (= 'next (first exp)) (next (eval- (fnext exp) :env env))  ;next
-             (= 'cons (first exp)) (cons (eval- (fnext exp) :env env) 
-                                         (eval- (fnnext exp) :env env))  ;cons
-             ;cond
-             (= 'cond (first exp)) 
-             (letfn [(eval-cond 
-                       [cond-pairs]
-                       (if (eval- (first cond-pairs) :env env)
-                         (eval- (fnext cond-pairs) :env env)
-                         (eval-cond (nnext cond-pairs))))]
-                    (eval-cond (next exp)))
-             
-             ;math
-             (math? (first exp))
-             (let [args (eval-arg (next exp) env)
-                   op (get-math-op (first exp))]
-               (reduce op args))
+      :else (eval- (cons (get-env-var env (first exp))
+                         (next exp)) :env env))
            
-             :else (eval- (cons (get-env-var env (first exp))
-                                (next exp)) :env env))
-           
-           ;anonymous function
-           (= 'fn (ffirst exp)) 
-           (let [local-env (create-local-env env
-                                             (fnfirst exp)
-                                             (eval-arg (next exp) env))]
-             (eval- (fnnfirst exp)
-                    :env local-env)))))
+    ;anonymous function
+    (= 'fn (ffirst exp)) 
+    (let [local-env (create-local-env env
+                                      (fnfirst exp)
+                                      (eval-arg (next exp) env))]
+      (eval- (fnnfirst exp)
+             :env local-env))))
 
 
 
